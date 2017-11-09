@@ -181,7 +181,7 @@ class optim_wrapper:
                     out_res.append(self.__obj)
                     pen_res.append(self.__pen)
                     count += 1.0
-            #TODO end
+                    
         # Keeping the bests results of the normalization to use them for a multi start
         if count>self.__nb_best:
             Ind_list_best = sorted(range(len(res_list)), key=lambda i: res_list[i])[:self.__nb_best]
