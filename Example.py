@@ -32,11 +32,12 @@ def Example_1(nb_param):
     lim = [(-2.0,2.0)]*nb_param
     Ex.set_X0(X0)
     Ex.set_lim(lim)
-    Ex.set_norm_count(50*nb_param*2)
-    Ex.set_nb_best(50*nb_param)
+    Ex.set_norm_count(nb_param**2*2)
+    Ex.set_nb_best(nb_param**2)
     Ex.set_obj_func(obj)
+    Ex.set_multi_proc(1)
     Ex.set_wrapper()
-    Ex.launch_multi_opti()
+    Ex.test_test()
     print Ex
 
     X_solution = [1.0]*nb_param
@@ -70,5 +71,5 @@ def Example_2():
     print "*" * len(res_string)
 
 if __name__ == "__main__":
-    Example_1(5)
+    Example_1(30)
     Example_2()

@@ -1,11 +1,11 @@
 from scipy.optimize import fmin_l_bfgs_b
 from constraints_wrapper import *
 from time import time
-from random import uniform
 import warnings
-from threading import Thread, RLock
+from Thread_manager import *
+from random import uniform
+import numpy as np
 
-lock = RLock()
 
 class optim_wrapper:
 
@@ -53,6 +53,9 @@ class optim_wrapper:
         self.__total_calc_time  = [0.0,0.0,0.0]
         self.__total_init_time  = [0.0,0.0]
         self.__nb_of_calls      = 0
+
+        # Parallel processing related variable
+        self.__multi_proc = None
 
     def set_X0(self,X0):
         """
@@ -114,6 +117,13 @@ class optim_wrapper:
         """
         self.__nb_best = nb_best
 
+    def set_multi_proc(self,multi_proc):
+        """
+        Function used to set the number of parallel process
+        Default is the number of thread of the computer-1
+        """
+        self.__multi_proc = multi_proc
+
     def get_res(self):
         """
         Function used to get the results of optimization
@@ -151,39 +161,29 @@ class optim_wrapper:
         Normalization happens during self.__norm_count seconds
         A security exist in order to evaluate all the functions more than 10 but less than 1e4 times
         """
-        res_list = []
-        X_list   = []
-        out_res  = []
-        pen_res  = []
-        count    = 0.0
-        i_proc = 0
-        proc_list = []
-        while count<10 or (count<self.__norm_count and count<10000.0):
+        # Creating random starting points
+        X_list = []
+        for i in range(self.__norm_count):
             X = np.zeros(self.__nb_param)
             for i_param in range(self.__nb_param):
-                X[i_param] = uniform(0.0,1.0)
+                X[i_param] = uniform(0.0, 1.0)
             X_list.append(X)
-            res_list.append(self.__obj_func(X))
-            out_res.append(self.__obj)
-            pen_res.append(self.__pen)
-            count += 1.0
+        # Launching the objective function for each starting points
+        thread_tool = thread_launcher(self.__obj_func,X_list)
+        tmp = thread_tool.launch()
 
-            #TODO multi proc
-            for i in range(3):
-                proc_list.append(thread_container(self.__obj_func))
-                proc_list[i_proc].set_param(X)
-                proc_list[i_proc].start()
-                proc_list[i_proc].join()
-                i_proc += 1
-                with lock:
-                    X_list.append(X)
-                    res_list.append(self.__obj_func(X))
-                    out_res.append(self.__obj)
-                    pen_res.append(self.__pen)
-                    count += 1.0
-                    
+        # Getting back the results
+        X_list    = tmp[0]
+        res_list  = []
+        out_res   = []
+        pen_res   = []
+        for i in range(len(X_list)):
+            res_list.append(tmp[1][i][0])
+            out_res.append(tmp[1][i][1])
+            pen_res.append(tmp[1][i][2])
+
         # Keeping the bests results of the normalization to use them for a multi start
-        if count>self.__nb_best:
+        if self.__norm_count>self.__nb_best:
             Ind_list_best = sorted(range(len(res_list)), key=lambda i: res_list[i])[:self.__nb_best]
             for i in range(self.__nb_best):
                 self.__X_best_list.append(X_list[Ind_list_best[i]])
@@ -192,6 +192,7 @@ class optim_wrapper:
             self.__X_best_list = X_list
             self.__nb_best = len(self.__X_best_list)
 
+        # Calculating the norms of the objective and the penalties
         self.__norm_obj = np.mean(out_res)
 
         if self.__is_pen == 1:
@@ -202,7 +203,7 @@ class optim_wrapper:
                     pen_tmp.append(pen_res[i][i_pen])
                 self.__norm_pen.append(np.mean(pen_tmp))
 
-    def __obj_func(self,X):
+    def __obj_func(self,X,Full_output=False):
         """
         Function used to calculate and apply the normalization of the objective and penaltiy functions
         This function will be minimized by the fmin_l_bfgs_b function
@@ -217,8 +218,10 @@ class optim_wrapper:
             self.__pen = [0.0,0.0]
 
         self.__obj_calc_time.append(time()-t0)
-
-        return self.__obj + np.sum(self.__pen)
+        if Full_output:
+            return [self.__obj + np.sum(self.__pen), self.__obj, self.__pen]
+        else:
+            return self.__obj + np.sum(self.__pen)
 
     def set_wrapper(self):
         """
@@ -288,6 +291,22 @@ class optim_wrapper:
         calc_time_tmp -= self.__total_calc_time[1] * 60.0
         self.__total_calc_time[2] = calc_time_tmp
 
+    def start_opti(self,X0,Full_output=False):
+        maxls_calc = max(self.__nb_param, 20)
+        res = fmin_l_bfgs_b(self.__obj_func, x0=X0, approx_grad=True, bounds=self.__lim, m=self.__nb_param, factr=1e12, pgtol=1e-05, epsilon=1e-04, maxls=maxls_calc)
+        return res
+        # self.__obj_func(res[0])
+        # self.__res_opt = self.__rescale(res[0])
+        # self.__final_grad = res[2]['grad']
+        # self.__final_pen = self.__pen * np.array(self.__norm_pen)
+
+    def test_test(self):
+
+        thread_tool = thread_launcher(self.start_opti, self.__X_best_list)
+        tmp = thread_tool.launch()
+
+
+
     def __repr__(self):
         """
         Function used to print results and statistics of the optimization wrapper
@@ -319,23 +338,3 @@ class optim_wrapper:
 
         return info_string
 
-class thread_container(Thread):
-
-    def __init__(self,func):
-        """
-        Constructor of the container used to launch function a multiple time simultaneously
-        func is the function that will be launched
-        """
-        Thread.__init__(self)
-        self.__func     = func
-        self.__param    = None
-        self.__res      = None
-
-    def set_param(self,param):
-        self.__param = param
-
-    def get_res(self):
-        return self.__res
-
-    def run(self):
-        self.__res = self.__func(self.__param)

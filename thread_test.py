@@ -2,6 +2,7 @@ import numpy as np
 from threading import Thread
 from random import uniform
 from time import time, sleep
+from psutil import cpu_count
 
 def obj(X):
     """
@@ -14,6 +15,15 @@ def obj(X):
         res += 100.0*(X[i_param+1]-X[i_param]**2)**2 + (X[i_param]-1.0)**2
     return res
 
+def pen(X):
+    """
+    Constraint test
+    """
+
+    res = np.sum(X)
+
+    return res
+
 class thread_container(Thread):
 
     def __init__(self,func):
@@ -22,9 +32,9 @@ class thread_container(Thread):
         func is the function that will be launched
         """
         Thread.__init__(self)
-        self.__func     = func
-        self.__param    = None
-        self.__res      = None
+        self.__func  = func
+        self.__param = None
+        self.__res   = None
 
     def set_param(self,param):
         self.__param = param
@@ -33,11 +43,18 @@ class thread_container(Thread):
         return self.__res
 
     def run(self):
-        self.__res = self.__func(self.__param)
+        if isinstance(self.__func,list):
+            self.__res = []
+            for i_func in range(len(self.__func)):
+                res_tmp = self.__func[i_func](self.__param)
+                self.__res.append(res_tmp)
+        else:
+            self.__res = self.__func(self.__param)
+
 
 
 def thread_test(nb_max_proc):
-    nb_test = 100
+    nb_test = 10
     i_proc = 0
     res_list = []
     proc_list = []
@@ -46,7 +63,7 @@ def thread_test(nb_max_proc):
             X = np.zeros(2)
             for i_param in range(len(X)):
                 X[i_param] = uniform(0, 2)
-            proc_list.append(thread_container(obj))
+            proc_list.append(thread_container([obj,pen]))
             proc_list[-1].set_param(X)
             proc_list[-1].start()
             i_proc += 1
@@ -61,17 +78,6 @@ def thread_test(nb_max_proc):
 
 if __name__ == "__main__":
     tic = time()
-    print len(thread_test(1))
+    # print thread_test(cpu_count()-1)
+    print thread_test(1)
     print time()-tic
-
-    tic = time()
-    print len(thread_test(2))
-    print time() - tic
-
-    tic = time()
-    print len(thread_test(4))
-    print time() - tic
-
-    tic = time()
-    print len(thread_test(10))
-    print time() - tic
