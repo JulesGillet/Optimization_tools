@@ -11,7 +11,6 @@ class thread_container(Thread):
         Thread.__init__(self)
         self.__func  = func
         self.__param = None
-        self.__args  = None
         self.__res   = None
 
     def set_param(self,param):

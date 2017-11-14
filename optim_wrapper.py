@@ -128,6 +128,13 @@ class optim_wrapper:
         else:
             self.__multi_proc = multi_proc
 
+    def get_X_opt(self):
+        """
+        Function used to get the results of optimization
+        Return a list of array
+        """
+        return self.__X_opt
+
     def get_res(self):
         """
         Function used to get the results of optimization
