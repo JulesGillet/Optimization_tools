@@ -40,22 +40,22 @@ class optim_wrapper:
         self.__norm_pen   = [1.0]
 
         # enhanced multi start variables
+        self.__maxls_calc  = 20
         self.__nb_best     = 1
         self.__X_best_list = []
 
         # Results related variable
-        self.__res_opt    = [0.0]
+        self.__X_opt      = [0.0]
+        self.__res_opt    = 0.0
         self.__final_grad = [0.0]
         self.__final_pen  = [0.0]
 
         # Statistics related variable
-        self.__obj_calc_time    = []
         self.__total_calc_time  = [0.0,0.0,0.0]
         self.__total_init_time  = [0.0,0.0]
-        self.__nb_of_calls      = 0
 
         # Parallel processing related variable
-        self.__multi_proc = None
+        self.__multi_proc = 1
 
     def set_X0(self,X0):
         """
@@ -120,9 +120,13 @@ class optim_wrapper:
     def set_multi_proc(self,multi_proc):
         """
         Function used to set the number of parallel process
-        Default is the number of thread of the computer-1
+        Default is 1
+        if multi_proc is set to 'auto', self.__multi_proc is set to cpu_count()-1
         """
-        self.__multi_proc = multi_proc
+        if multi_proc == "auto":
+            self.__multi_proc = cpu_count()-1
+        else:
+            self.__multi_proc = multi_proc
 
     def get_res(self):
         """
@@ -169,7 +173,8 @@ class optim_wrapper:
                 X[i_param] = uniform(0.0, 1.0)
             X_list.append(X)
         # Launching the objective function for each starting points
-        thread_tool = thread_launcher(self.__obj_func,X_list)
+        thread_tool = thread_launcher(self.__compute_problem,X_list)
+        thread_tool.set_multi_proc(self.__multi_proc)
         tmp = thread_tool.launch()
 
         # Getting back the results
@@ -203,25 +208,25 @@ class optim_wrapper:
                     pen_tmp.append(pen_res[i][i_pen])
                 self.__norm_pen.append(np.mean(pen_tmp))
 
-    def __obj_func(self,X,Full_output=False):
+    def __compute_problem(self,X):
         """
         Function used to calculate and apply the normalization of the objective and penaltiy functions
+        """
+        real_X = self.__rescale(X)
+        obj = self.__real_obj_func(real_X) / self.__norm_obj
+        if self.__is_pen == 1:
+            pen = np.array(self.__pen_func(real_X)) / np.array(self.__norm_pen)
+        else:
+            pen = [0.0, 0.0]
+
+        return [obj + np.sum(pen), obj, pen]
+
+    def __obj_func(self,X):
+        """
+        Function built from __compute_problem function and take the first results only
         This function will be minimized by the fmin_l_bfgs_b function
         """
-        t0 = time()
-        self.__nb_of_calls += 1
-        real_X = self.__rescale(X)
-        self.__obj = self.__real_obj_func(real_X)/self.__norm_obj
-        if self.__is_pen == 1:
-            self.__pen = np.array(self.__pen_func(real_X))/np.array(self.__norm_pen)
-        else:
-            self.__pen = [0.0,0.0]
-
-        self.__obj_calc_time.append(time()-t0)
-        if Full_output:
-            return [self.__obj + np.sum(self.__pen), self.__obj, self.__pen]
-        else:
-            return self.__obj + np.sum(self.__pen)
+        return self.__compute_problem(X)[0]
 
     def set_wrapper(self):
         """
@@ -242,46 +247,40 @@ class optim_wrapper:
         calc_time_tmp -= self.__total_calc_time[1] * 60.0
         self.__total_init_time[1] = calc_time_tmp
 
-    def launch_opti(self):
+    def __start_opti(self,X0):
         """
-        Function used to launch the optimization function
-        Also calculate computation times for statistics purpose
+        Function used to launch the optimization function from an initial guess X0
         """
-        t0 = time()
-        maxls_calc = max(self.__nb_param, 20)
-        res = fmin_l_bfgs_b(self.__obj_func, x0=self.__X0, approx_grad=True, bounds=self.__lim, m=self.__nb_param, factr=1e12, pgtol=1e-05, epsilon=1e-04, maxls=maxls_calc)
-        self.__obj_func(res[0])
-        self.__res_opt    = self.__rescale(res[0])
-        self.__final_grad = res[2]['grad']
-        self.__final_pen  = self.__pen*np.array(self.__norm_pen)
+        res = fmin_l_bfgs_b(self.__obj_func, x0=X0, approx_grad=True, bounds=self.__lim, m=self.__nb_param, factr=1e12, pgtol=1e-05, epsilon=1e-04, maxls=self.__maxls_calc)
+        return res
 
-        # Time calculation (statistics related)
-        calc_time_tmp             = time() - t0
-        self.__total_calc_time[0] = int(np.floor(calc_time_tmp/60.0/60.0))
-        calc_time_tmp -= self.__total_calc_time[0]*60.0*60.0
-        self.__total_calc_time[1] = int(np.floor(calc_time_tmp/60.0))
-        calc_time_tmp -= self.__total_calc_time[1]*60.0
-        self.__total_calc_time[2] = calc_time_tmp
-
-    def launch_multi_opti(self):
+    def run(self):
         """
         Function used to launch the optimization function multiple time
         The multi start is based on the nb_best results of the normalization function
         Also calculate computation times for statistics purpose
         """
-
         t0 = time()
-        maxls_calc = max(self.__nb_param, 20)
+        self.__maxls_calc = max(self.__nb_param, 20)
+        if self.__nb_best==1:
+            X_start = [self.__X0]
+        else:
+            X_start = self.__X_best_list
+        thread_tool = thread_launcher(self.__start_opti, X_start)
+        thread_tool.set_multi_proc(self.__multi_proc)
+        res_list = thread_tool.launch()
+
+        # Retrieving the results
         f_min = 1e20
-        for i_best in range(self.__nb_best):
-            X0 = self.__X_best_list[i_best]
-            res = fmin_l_bfgs_b(self.__obj_func, x0=X0, approx_grad=True, bounds=self.__lim, m=self.__nb_param,factr=1e12, pgtol=1e-05, epsilon=1e-04, maxls=maxls_calc)
-            self.__obj_func(res[0])
-            if self.__obj<f_min:
-                f_min = self.__obj
-                self.__res_opt = self.__rescale(res[0])
-                self.__final_grad = res[2]['grad']
-                self.__final_pen = self.__pen*np.array(self.__norm_pen)
+        for i_best in range(len(res_list[0])):
+            res = res_list[1][i_best][1]
+            if res<f_min:
+                f_min = res
+                self.__X_opt = self.__rescale(res_list[1][i_best][0])
+                [toto, self.__res_opt, self.__final_pen] = self.__compute_problem(res_list[1][i_best][0])
+                self.__res_opt   *= self.__norm_obj
+                self.__final_pen  = np.array(self.__final_pen)*self.__norm_pen
+                self.__final_grad = res_list[1][i_best][2]['grad']
 
         # Time calculation (statistics related)
         calc_time_tmp = time() - t0
@@ -291,48 +290,27 @@ class optim_wrapper:
         calc_time_tmp -= self.__total_calc_time[1] * 60.0
         self.__total_calc_time[2] = calc_time_tmp
 
-    def start_opti(self,X0,Full_output=False):
-        maxls_calc = max(self.__nb_param, 20)
-        res = fmin_l_bfgs_b(self.__obj_func, x0=X0, approx_grad=True, bounds=self.__lim, m=self.__nb_param, factr=1e12, pgtol=1e-05, epsilon=1e-04, maxls=maxls_calc)
-        return res
-        # self.__obj_func(res[0])
-        # self.__res_opt = self.__rescale(res[0])
-        # self.__final_grad = res[2]['grad']
-        # self.__final_pen = self.__pen * np.array(self.__norm_pen)
-
-    def test_test(self):
-
-        thread_tool = thread_launcher(self.start_opti, self.__X_best_list)
-        tmp = thread_tool.launch()
-
-
-
     def __repr__(self):
         """
         Function used to print results and statistics of the optimization wrapper
         """
         info_string = ""
         info_string += "\n** Results of the optimization **"
-        if len(self.__res_opt)<=10:
-            info_string += "\n  - Optimization results: {0}".format(self.__res_opt)
-            info_string += "\n  - Final gradient:       {0}".format(self.__final_grad)
+        if len(self.__X_opt)<=10:
+            info_string += "\n  - Optimization results:  {0}".format(self.__X_opt)
+            info_string += "\n  - Final objective value: {0}".format(self.__res_opt)
+            info_string += "\n  - Final gradient:        {0}".format(self.__final_grad)
         else:
             info_string += "\n  - Solution and gradient are too long to be displayed, please refer to get_res and get_grad method"
         if self.__is_pen == 1:
             if self.__nb_pen<10:
-                info_string += "\n  - Final penalties:      {0}".format(self.__final_pen)
+                info_string += "\n  - Final penalties:       {0}".format(self.__final_pen)
             else:
                 info_string += "\n  - Penalties are too long to be displayed, please refer to get_pen method"
         info_string += "\n"
         info_string += "\n** Statistics of the optimization **"
-        info_string += "\n  - Number of objective function call =               {0} times".format(self.__nb_of_calls)
-        info_string += "\n  - Total initialization time =                       {0}mn {1:2.3f}s".format(self.__total_init_time[0], self.__total_init_time[1])
-        info_string += "\n  - Total optimization time =                         {0}h {1}mn {2:2.3f}s".format(self.__total_calc_time[0],self.__total_calc_time[1],self.__total_calc_time[2])
-
-        if np.mean(self.__obj_calc_time)<1:
-            info_string += "\n  - Mean calculation time of the objective function = {0:4.2f}ms".format(np.mean(self.__obj_calc_time)*1000.0)
-        else:
-            info_string += "\n  - Mean calculation time of the objective function = {0:4.2f}s".format(np.mean(self.__obj_calc_time))
+        info_string += "\n  - Total initialization time = {0}mn {1:2.3f}s".format(self.__total_init_time[0], self.__total_init_time[1])
+        info_string += "\n  - Total optimization time =   {0}h {1}mn {2:2.3f}s".format(self.__total_calc_time[0],self.__total_calc_time[1],self.__total_calc_time[2])
 
         info_string += "\n\n"
 
