@@ -11,6 +11,7 @@ class thread_container(Thread):
         Thread.__init__(self)
         self.__func  = func
         self.__param = None
+        self.__args  = None
         self.__res   = None
 
     def set_param(self,param):
@@ -38,7 +39,7 @@ class thread_container(Thread):
         Launch the function with the set of parameter self.__param
         Store the result in self.__res
         """
-        self.__res = self.__func(self.__param)
+        self.__res = self.__func(self.__param,Full_output=True)
 
 class thread_launcher:
 
@@ -48,33 +49,19 @@ class thread_launcher:
 
     def __init__(self,func,X_list):
         self.__func             = func
-        self.__nb_multi_thread  = 1
+        self.__nb_multi_thread  = cpu_count() - 1
         self.__X_list           = X_list
+        self.__nb_param         = len(X_list[0])
         self.__tot_count        = len(X_list)
-        self.__return           = True
-
-        # testing the function return
-        test = self.__func(self.__X_list[0])
-        if test is None:
-            self.__return = False
 
     def set_multi_proc(self,param):
         """
-        Function used to set the number of parallel process (optional)
-        Default is 1
-        if multi_proc is set to 'auto', self.__multi_proc is set to cpu_count()-1
+        Function used to set the number of parallel process
+        Default is the number of thread of the computer-1
         """
-        if param == "auto":
-            self.__nb_multi_thread = cpu_count()-1
-        else:
-            self.__nb_multi_thread = param
+        self.__nb_multi_thread = param
 
     def launch(self):
-        """
-        Launch the function multiple time in parallel according to the constructor
-        If the function as a return value, return the parameter and the return value of the function
-        Else return nothing
-        """
         X_list_res  = []
         res_list    = []
         proc_list   = []
@@ -85,6 +72,7 @@ class thread_launcher:
                 proc_list.append(thread_container(self.__func))
                 proc_list[-1].set_param(self.__X_list[count])
                 proc_list[-1].start()
+                count += 1
 
             # Checking and getting back the results of the launched processes
             i_proc_verif = 0
@@ -92,10 +80,8 @@ class thread_launcher:
                 if proc_list[i_proc_verif].is_alive():
                     i_proc_verif += 1
                 else:
-                    if self.__return:
-                        X_list_res.append(proc_list[i_proc_verif].get_param())
-                        res_list.append(proc_list[i_proc_verif].get_res())
+                    X_list_res.append(proc_list[i_proc_verif].get_param())
+                    res_list.append(proc_list[i_proc_verif].get_res())
                     proc_list.remove(proc_list[i_proc_verif])
-                    count += 1
-        if self.__return:
-            return [X_list_res, res_list]
+
+        return [X_list_res, res_list]
